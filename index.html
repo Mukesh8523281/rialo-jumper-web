@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rialo Jumper</title>
+<style>
+body, html {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: black;
+}
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+// --- Setup ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let WIDTH = window.innerWidth;
+let HEIGHT = window.innerHeight;
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
+
+// --- Load assets ---
+const playerImg = new Image();
+playerImg.src = 'assets/rialo_logo.png';
+
+const bgImg = new Image();
+bgImg.src = 'assets/background.png';
+
+const cloudImg = new Image();
+cloudImg.src = 'assets/clouds.png';
+
+// --- Sounds ---
+const jumpSound = new Audio('assets/jump.wav');
+const doubleJumpSound = new Audio('assets/double_jump.wav');
+const collisionSound = new Audio('assets/collision.wav');
+const scoreSound = new Audio('assets/score.wav');
+const powerupSound = new Audio('assets/powerup.wav');
+const bgMusic = new Audio('assets/background_music.mp3');
+bgMusic.loop = true;
+bgMusic.volume = 0.3;
+bgMusic.play().catch(()=>{}); // play after user gesture
+
+// --- Colors ---
+const WHITE = 'white';
+const RED = 'red';
+const YELLOW = 'yellow';
+const BLUE = '#64c8ff';
+const PURPLE = '#c864ff';
+
+// --- Game variables ---
+let player = { x: 50, y: HEIGHT-150, w:50, h:50, vy:0, jumps:2 };
+let gravity = 0.5;
+let jumpStrength = -12;
+let jumpsLeft = 2;
+
+let obstacles = [];
+let obstacleTimer = 0;
+let spawnInterval = 90;
+let obstacleSpeed = 5;
+
+let particles = [];
+
+let powerups = [];
+let activePowerup = null;
+let powerupTimer = 0;
+let powerupDuration = 200;
+let invincible = false;
+
+let score = 0;
+
+let gameActive = false;
+let gameOver = false;
+
+let bgX = 0;
+let cloudX = 0;
+let cloudY = 50;
+let bgScrollSpeed = 2;
+let cloudSpeed = 1;
+
+let shakeTimer = 0;
+let shakeOffset = {x:0, y:0};
+
+let bobCounter = 0;
+
+// --- Input ---
+let keys = {};
+window.addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='Space') handleJump(); });
+window.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+// --- Functions ---
+function handleJump() {
+    if(!gameActive){
+        gameActive = true;
+        resetGame();
+    } else if(jumpsLeft>0){
+        player.vy = jumpStrength;
+        if(jumpsLeft===1){
+            doubleJumpSound.play();
+            for(let i=0;i<15;i++){
+                particles.push({x:player.x+25,y:player.y+45,vx:(Math.random()*4-2),vy:(Math.random()*-1-1),size:Math.random()*3+4,color:YELLOW});
+            }
+        } else { jumpSound.play(); }
+        jumpsLeft--;
+    }
+}
+
+function resetGame(){
+    player.y = HEIGHT-150;
+    player.vy = 0;
+    jumpsLeft = 2;
+    obstacles = [];
+    particles = [];
+    powerups = [];
+    score = 0;
+    gameOver = false;
+    spawnInterval = 90;
+    obstacleSpeed = 5;
+    activePowerup = null;
+    powerupTimer = 0;
+    invincible=false;
+    shakeTimer=0;
+}
+
+// --- Hitbox ---
+function getPlayerHitbox(){ return {x:player.x+5, y:player.y+35, w:40, h:15}; }
+
+// --- Main loop ---
+function loop(){
+    // Resize
+    WIDTH = window.innerWidth;
+    HEIGHT = window.innerHeight;
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+
+    // Background
+    bgX -= bgScrollSpeed;
+    if(bgX <= -WIDTH) bgX=0;
+    cloudX -= cloudSpeed;
+    if(cloudX <= -400) cloudX=0;
+
+    ctx.clearRect(0,0,WIDTH,HEIGHT);
+
+    // Draw background
+    ctx.drawImage(bgImg,bgX,0,WIDTH,HEIGHT);
+    ctx.drawImage(bgImg,bgX+WIDTH,0,WIDTH,HEIGHT);
+    ctx.drawImage(cloudImg,cloudX,cloudY,400,100);
+    ctx.drawImage(cloudImg,cloudX+400,cloudY,400,100);
+
+    // Overlay vignette
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(0,0,WIDTH,HEIGHT);
+
+    if(gameActive){
+        // --- Player physics ---
+        player.vy += gravity;
+        player.y += player.vy;
+        if(player.y > HEIGHT-150){ player.y = HEIGHT-150; player.vy=0; jumpsLeft=2; }
+
+        // --- Bob ---
+        let bobOffset = Math.sin(bobCounter*2*Math.PI)*3;
+        if(player.y>=HEIGHT-150) bobCounter+=0.05;
+
+        // --- Particle trail ---
+        particles.push({x:player.x+25,y:player.y+45,vx:(Math.random()*-0.5-0.5),vy:(Math.random()*-1),size:Math.random()*2+4,color:BLUE});
+        particles.forEach((p,i)=>{ p.x+=p.vx; p.y+=p.vy; p.size-=0.1; if(p.size<=0) particles.splice(i,1);
+            else {ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();} });
+
+        ctx.drawImage(playerImg,player.x,player.y+bobOffset,player.w,player.h);
+
+        // --- Obstacles ---
+        obstacleTimer++;
+        if(obstacleTimer>spawnInterval){
+            let type = Math.random()<0.5?'firewall':'spike';
+            let height = type==='firewall'?Math.random()*60+120:Math.random()*60+100;
+            let yPos = HEIGHT-height;
+            obstacles.push({x:WIDTH,y:yPos,w:50,h:height,type:type});
+            if(Math.random()<0.2){ obstacles.push({x:WIDTH+Math.random()*120,y:yPos,w:50,h:height,type:type}); }
+            obstacleTimer=0;
+        }
+
+        obstacles.forEach((ob,i)=>{
+            ob.x -= obstacleSpeed;
+            if(ob.type==='firewall'){
+                let pulse = 128 + Math.sin(Date.now()/200)*127;
+                ctx.fillStyle=`rgb(255,${pulse},${pulse})`;
+                ctx.fillRect(ob.x-6,ob.y-6,ob.w+12,ob.h+12);
+                ctx.fillStyle=RED;
+                ctx.fillRect(ob.x,ob.y,ob.w,ob.h);
+            } else {
+                let pulse = 128 + Math.sin(Date.now()/200)*127;
+                ctx.fillStyle=`rgb(${pulse},${pulse},${pulse})`;
+                ctx.beginPath();
+                ctx.moveTo(ob.x,ob.y+ob.h);
+                ctx.lineTo(ob.x+ob.w/2,ob.y);
+                ctx.lineTo(ob.x+ob.w,ob.y+ob.h);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle=WHITE;
+                ctx.beginPath();
+                ctx.moveTo(ob.x,ob.y+ob.h);
+                ctx.lineTo(ob.x+ob.w/2,ob.y);
+                ctx.lineTo(ob.x+ob.w,ob.y+ob.h);
+                ctx.closePath();
+                ctx.stroke();
+            }
+
+            // Collision
+            let ph = getPlayerHitbox();
+            if(!invincible && ph.x < ob.x+ob.w && ph.x+ph.w > ob.x && ph.y < ob.y+ob.h && ph.y+ph.h > ob.y){
+                collisionSound.play();
+                shakeTimer=10;
+                gameActive=false;
+                gameOver=true;
+            }
+
+            if(ob.x+ob.w<0){ obstacles.splice(i,1); score++; scoreSound.play();
+                if(score%3===0 && spawnInterval>40){ spawnInterval-=2; obstacleSpeed+=0.5; }
+            }
+        });
+
+        // --- Powerups ---
+        if(Math.random()<0.002 && powerups.length<2){ // occasional spawn
+            let types=['score','slow','invincible'];
+            let p = types[Math.floor(Math.random()*types.length)];
+            powerups.push({x:WIDTH,y:Math.random()*100+150,w:30,h:30,type:p});
+        }
+
+        powerups.forEach((p,i)=>{
+            p.x -=3;
+            let col = p.type==='score'?YELLOW:p.type==='slow'?BLUE:PURPLE;
+            let pulse = 128 + Math.sin(Date.now()/200)*127;
+            ctx.fillStyle=`rgb(${pulse},${pulse},${col==='yellow'?0:col==='blue'?255:255})`;
+            ctx.beginPath();
+            ctx.arc(p.x,p.y,15,0,Math.PI*2);
+            ctx.fill();
+
+            // Collision
+            if(player.x< p.x+15 && player.x+player.w>p.x-15 && player.y< p.y+15 && player.y+player.h>p.y-15){
+                powerupSound.play();
+                activePowerup=p.type;
+                powerups.splice(i,1);
+                powerupTimer=0;
+                if(activePowerup==='score') score+=5;
+                else if(activePowerup==='slow') obstacleSpeed=Math.max(3,obstacleSpeed-2);
+                else if(activePowerup==='invincible') invincible=true;
+            }
+        });
+
+        // --- Active powerup ---
+        if(activePowerup){
+            powerupTimer++;
+            ctx.fillStyle=YELLOW;
+            ctx.font='24px Arial';
+            let status = activePowerup==='score'?'Score Boost!':activePowerup==='slow'?'Slow Motion!':'Invincible!';
+            ctx.fillText(status, 20,50);
+
+            if(powerupTimer>=powerupDuration){ 
+                if(activePowerup==='slow') obstacleSpeed+=2;
+                if(activePowerup==='invincible') invincible=false;
+                activePowerup=null; powerupTimer=0;
+            }
+        }
+
+        // --- Score ---
+        ctx.fillStyle='white';
+        ctx.font='28px Arial';
+        ctx.fillText('Score: '+score, 20,30);
+
+        // --- Screen shake ---
+        if(shakeTimer>0){ shakeTimer--; shakeOffset.x=Math.random()*10-5; shakeOffset.y=Math.random()*10-5;}
+        else{ shakeOffset={x:0,y:0}; }
+
+    } else if(gameOver){
+        ctx.fillStyle='rgba(0,0,0,0.5)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle='red';
+        ctx.font='72px Arial';
+        ctx.textAlign='center';
+        ctx.fillText('GAME OVER',WIDTH/2,HEIGHT/2-80);
+        ctx.fillStyle='white';
+        ctx.font='36px Arial';
+        ctx.fillText('Score: '+score, WIDTH/2, HEIGHT/2);
+        ctx.fillStyle='orange';
+        ctx.font='28px Arial';
+        ctx.fillText('Press SPACE to Restart', WIDTH/2, HEIGHT/2+60);
+    } else {
+        // Start screen
+        ctx.fillStyle='rgba(0,0,0,0.5)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle='gold';
+        ctx.font='72px Arial';
+        ctx.textAlign='center';
+        ctx.fillText('Rialo Jumper', WIDTH/2, HEIGHT/2-60);
+        ctx.fillStyle='white';
+        ctx.font='36px Arial';
+        ctx.fillText('Press SPACE to Start', WIDTH/2, HEIGHT/2+40);
+    }
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
