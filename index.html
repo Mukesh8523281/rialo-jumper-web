@@ -1,311 +1,444 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Rialo Jumper</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Rialo Jumper — Web</title>
 <style>
-body, html {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    background: black;
-}
-canvas { display: block; }
+  :root{
+    --gold:#ffd24d;
+    --blue:#64c8ff;
+    --cyan:#2fe6d6;
+    --bg:#000;
+    --ui-bg: rgba(255,255,255,0.14);
+  }
+  html,body{height:100%;margin:0;background:var(--bg);-webkit-tap-highlight-color:transparent;}
+  canvas{display:block;width:100vw;height:100vh;}
+  /* Jump button (neon pulse) */
+  #jumpButton{
+    position:fixed; right:22px; bottom:22px;
+    width:90px;height:90px;border-radius:50%;
+    background:var(--ui-bg); color:#fff; font-weight:700; z-index:50;
+    display:flex;align-items:center;justify-content:center;
+    border:2px solid rgba(255,255,255,0.18); user-select:none;
+    box-shadow: 0 6px 20px rgba(0,255,255,0.06), 0 0 10px rgba(0,255,255,0.04);
+    cursor:pointer;
+    -webkit-user-select:none; touch-action:none;
+    transition: transform .08s ease;
+  }
+  #jumpButton:active{ transform: scale(.96); }
+  /* neon pulse */
+  @keyframes neonPulse {
+    0%{ box-shadow: 0 0 6px rgba(0,255,255,0.05), 0 0 18px rgba(0,255,255,0.02);}
+    50%{ box-shadow: 0 0 20px rgba(0,255,255,0.18), 0 0 38px rgba(0,255,255,0.08);}
+    100%{ box-shadow: 0 0 6px rgba(0,255,255,0.05), 0 0 18px rgba(0,255,255,0.02);}
+  }
+  #jumpButton.pulse{ animation: neonPulse 1600ms infinite ease-in-out; }
+
+  /* Restart button (only visible on game over) */
+  #restartButton{
+    position:fixed; left:50%; transform:translateX(-50%); bottom:28px;
+    min-width:160px;padding:12px 18px;border-radius:12px;background:var(--ui-bg);
+    color:#fff;font-weight:700;text-align:center;z-index:49;display:none;
+    border:2px solid rgba(255,255,255,0.12); cursor:pointer; touch-action:none;
+  }
+
+  /* Power-up bar */
+  #powerbar{
+    position:fixed; top:10px; left:50%; transform:translateX(-50%);
+    display:flex; gap:18px; align-items:center; z-index:60;
+    pointer-events:none;
+  }
+  .pwrap{ display:flex;flex-direction:column; align-items:center; font-family:Arial,Helvetica,sans-serif; font-size:12px; color:#ddd; }
+  .icon{
+    width:44px;height:44px;border-radius:10px; display:flex;align-items:center;justify-content:center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.6); opacity:0.45;
+    transition: all .18s ease; background: rgba(255,255,255,0.04);
+  }
+  .icon.active{ opacity:1; transform:translateY(-4px); box-shadow:0 10px 28px rgba(0,0,0,0.55), 0 0 22px rgba(255,255,255,0.02); pointer-events:none;}
+  .icon .dot{ width:26px;height:26px;border-radius:6px; }
+  .label{ margin-top:6px; color:#fff; opacity:0.92; font-weight:600; font-size:12px; text-align:center; pointer-events:none; }
+
+  /* position for score and subtle UI */
+  #scoreWrap{ position:fixed; left:18px; top:10px; z-index:55; color:#fff; font-family: Arial, Helvetica, sans-serif; text-shadow:0 2px 6px rgba(0,0,0,0.6); }
+  #scoreWrap .score{ font-size:20px; font-weight:700; }
+
+  /* small responsiveness */
+  @media (max-width:520px){
+    #jumpButton{ width:78px;height:78px; right:14px; bottom:14px;}
+    .icon{ width:40px;height:40px; } .label{ font-size:11px; }
+    #restartButton{ min-width:140px; bottom:16px; padding:10px 14px; }
+    #scoreWrap .score{ font-size:18px; }
+  }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
+
+<!-- UI -->
+<div id="powerbar" aria-hidden="true">
+  <div class="pwrap" id="p_score">
+    <div class="icon" id="icon_score"><div class="dot" style="background:var(--gold)"></div></div>
+    <div class="label">Score</div>
+  </div>
+  <div class="pwrap" id="p_slow">
+    <div class="icon" id="icon_slow"><div class="dot" style="background:var(--blue)"></div></div>
+    <div class="label">Slow</div>
+  </div>
+  <div class="pwrap" id="p_inv">
+    <div class="icon" id="icon_inv"><div class="dot" style="background:var(--cyan)"></div></div>
+    <div class="label">Shield</div>
+  </div>
+</div>
+
+<div id="scoreWrap"><div class="score" id="scoreText">Score: 0</div></div>
+
+<button id="jumpButton" class="pulse">JUMP</button>
+<button id="restartButton">RESTART</button>
+
 <script>
-// --- Setup ---
+/* -------------------------
+   Rialo Jumper — Final Web
+   ------------------------- */
+
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-let WIDTH = window.innerWidth;
-let HEIGHT = window.innerHeight;
-canvas.width = WIDTH;
-canvas.height = HEIGHT;
+const ctx = canvas.getContext('2d', {alpha:false});
+let W = innerWidth, H = innerHeight;
+canvas.width = W; canvas.height = H;
 
-// --- Load assets ---
-const playerImg = new Image();
-playerImg.src = 'assets/rialo_logo.png';
+// Assets (keep files in /assets/)
+const A = {};
+A.player = new Image(); A.player.src = "assets/rialo_logo.png";
+A.bg = new Image(); A.bg.src = "assets/background.png";
+A.clouds = new Image(); A.clouds.src = "assets/clouds.png";
 
-const bgImg = new Image();
-bgImg.src = 'assets/background.png';
+// Sounds (safe play)
+function s(src){
+  const a = new Audio(src);
+  a.preload = "auto";
+  return a;
+}
+const S = {
+  jump: s("assets/jump.wav"),
+  double: s("assets/double_jump.wav"),
+  collide: s("assets/collision.wav"),
+  score: s("assets/score.wav"),
+  powerup: s("assets/powerup.wav"),
+  music: s("assets/background_music.mp3")
+};
+S.music.loop = true; S.music.volume = 0.35;
 
-const cloudImg = new Image();
-cloudImg.src = 'assets/clouds.png';
+// Game state
+let maxJumps = 2;
+let player = { x:80, y:H-150, w:50, h:50, vy:0, jumpsLeft: maxJumps };
+let gravity = 0.6, jumpPower = -13;
+let obstacles = [], particles = [], powerups = [];
+let spawnTimer = 0, spawnDelay = 100, obstacleSpeed = 5, speedBoost = 0.0006;
+let score = 0, running = false, gameOver = false, paused = false;
+let activePower = null, powerTimer = 0, powerDuration = 240, invincible = false;
+let bgX = 0, cloudX = 0, vignetteAlpha = 0.24;
+let last = performance.now();
+let bob = 0;
 
-// --- Sounds ---
-const jumpSound = new Audio('assets/jump.wav');
-const doubleJumpSound = new Audio('assets/double_jump.wav');
-const collisionSound = new Audio('assets/collision.wav');
-const scoreSound = new Audio('assets/score.wav');
-const powerupSound = new Audio('assets/powerup.wav');
-const bgMusic = new Audio('assets/background_music.mp3');
-bgMusic.loop = true;
-bgMusic.volume = 0.3;
-bgMusic.play().catch(()=>{}); // play after user gesture
+// UI elements
+const jumpButton = document.getElementById('jumpButton');
+const restartButton = document.getElementById('restartButton');
+const scoreText = document.getElementById('scoreText');
+const icon_score = document.getElementById('icon_score');
+const icon_slow = document.getElementById('icon_slow');
+const icon_inv = document.getElementById('icon_inv');
 
-// --- Colors ---
-const WHITE = 'white';
-const RED = 'red';
-const YELLOW = 'yellow';
-const BLUE = '#64c8ff';
-const PURPLE = '#c864ff';
+restartButton.style.display = 'none';
 
-// --- Game variables ---
-let player = { x: 50, y: HEIGHT-150, w:50, h:50, vy:0, jumps:2 };
-let gravity = 0.5;
-let jumpStrength = -12;
-let jumpsLeft = 2;
-
-let obstacles = [];
-let obstacleTimer = 0;
-let spawnInterval = 90;
-let obstacleSpeed = 5;
-
-let particles = [];
-
-let powerups = [];
-let activePowerup = null;
-let powerupTimer = 0;
-let powerupDuration = 200;
-let invincible = false;
-
-let score = 0;
-
-let gameActive = false;
-let gameOver = false;
-
-let bgX = 0;
-let cloudX = 0;
-let cloudY = 50;
-let bgScrollSpeed = 2;
-let cloudSpeed = 1;
-
-let shakeTimer = 0;
-let shakeOffset = {x:0, y:0};
-
-let bobCounter = 0;
-
-// --- Input ---
-let keys = {};
-window.addEventListener('keydown', e=>{ keys[e.code]=true; if(e.code==='Space') handleJump(); });
-window.addEventListener('keyup', e=>{ keys[e.code]=false; });
-
-// --- Functions ---
-function handleJump() {
-    if(!gameActive){
-        gameActive = true;
-        resetGame();
-    } else if(jumpsLeft>0){
-        player.vy = jumpStrength;
-        if(jumpsLeft===1){
-            doubleJumpSound.play();
-            for(let i=0;i<15;i++){
-                particles.push({x:player.x+25,y:player.y+45,vx:(Math.random()*4-2),vy:(Math.random()*-1-1),size:Math.random()*3+4,color:YELLOW});
-            }
-        } else { jumpSound.play(); }
-        jumpsLeft--;
-    }
+// helpers
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+function playSound(audio){
+  try{
+    audio.currentTime = 0;
+    audio.play().catch(()=>{ /* autoplay block possible before user interaction */});
+  }catch(e){ /* ignore */ }
 }
 
-function resetGame(){
-    player.y = HEIGHT-150;
-    player.vy = 0;
-    jumpsLeft = 2;
-    obstacles = [];
-    particles = [];
-    powerups = [];
-    score = 0;
-    gameOver = false;
-    spawnInterval = 90;
-    obstacleSpeed = 5;
-    activePowerup = null;
-    powerupTimer = 0;
-    invincible=false;
-    shakeTimer=0;
+function addParticles(x,y,color,count=20){
+  for(let i=0;i<count;i++){
+    particles.push({
+      x:x + Math.random()*20 - 10,
+      y:y + Math.random()*20 - 10,
+      vx: (Math.random()*6-3),
+      vy: (Math.random()*-3),
+      size: Math.random()*4 + 1.2,
+      color: color
+    });
+  }
+  // cap
+  if(particles.length > 450) particles.splice(0, particles.length - 450);
 }
 
-// --- Hitbox ---
-function getPlayerHitbox(){ return {x:player.x+5, y:player.y+35, w:40, h:15}; }
+function spawnObstacle(){
+  const t = Math.random() < 0.5 ? 'firewall' : 'spike';
+  const h = 100 + Math.random()*80;
+  obstacles.push({ x: W, y: H - h, w: 50, h: h, hue: Math.floor(Math.random()*360), type: t });
+  if(obstacles.length > 26) obstacles.splice(0, obstacles.length - 26); // cap
+}
 
-// --- Main loop ---
-function loop(){
-    // Resize
-    WIDTH = window.innerWidth;
-    HEIGHT = window.innerHeight;
-    canvas.width = WIDTH;
-    canvas.height = HEIGHT;
+function spawnPowerup(){
+  const types = ['score','slow','invincible'];
+  const t = types[Math.floor(Math.random()*types.length)];
+  powerups.push({ x: W, y: H - 180 - Math.random()*120, type: t });
+  if(powerups.length > 4) powerups.splice(0, powerups.length-4);
+}
 
-    // Background
-    bgX -= bgScrollSpeed;
-    if(bgX <= -WIDTH) bgX=0;
-    cloudX -= cloudSpeed;
-    if(cloudX <= -400) cloudX=0;
-
-    ctx.clearRect(0,0,WIDTH,HEIGHT);
-
-    // Draw background
-    ctx.drawImage(bgImg,bgX,0,WIDTH,HEIGHT);
-    ctx.drawImage(bgImg,bgX+WIDTH,0,WIDTH,HEIGHT);
-    ctx.drawImage(cloudImg,cloudX,cloudY,400,100);
-    ctx.drawImage(cloudImg,cloudX+400,cloudY,400,100);
-
-    // Overlay vignette
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fillRect(0,0,WIDTH,HEIGHT);
-
-    if(gameActive){
-        // --- Player physics ---
-        player.vy += gravity;
-        player.y += player.vy;
-        if(player.y > HEIGHT-150){ player.y = HEIGHT-150; player.vy=0; jumpsLeft=2; }
-
-        // --- Bob ---
-        let bobOffset = Math.sin(bobCounter*2*Math.PI)*3;
-        if(player.y>=HEIGHT-150) bobCounter+=0.05;
-
-        // --- Particle trail ---
-        particles.push({x:player.x+25,y:player.y+45,vx:(Math.random()*-0.5-0.5),vy:(Math.random()*-1),size:Math.random()*2+4,color:BLUE});
-        particles.forEach((p,i)=>{ p.x+=p.vx; p.y+=p.vy; p.size-=0.1; if(p.size<=0) particles.splice(i,1);
-            else {ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();} });
-
-        ctx.drawImage(playerImg,player.x,player.y+bobOffset,player.w,player.h);
-
-        // --- Obstacles ---
-        obstacleTimer++;
-        if(obstacleTimer>spawnInterval){
-            let type = Math.random()<0.5?'firewall':'spike';
-            let height = type==='firewall'?Math.random()*60+120:Math.random()*60+100;
-            let yPos = HEIGHT-height;
-            obstacles.push({x:WIDTH,y:yPos,w:50,h:height,type:type});
-            if(Math.random()<0.2){ obstacles.push({x:WIDTH+Math.random()*120,y:yPos,w:50,h:height,type:type}); }
-            obstacleTimer=0;
-        }
-
-        obstacles.forEach((ob,i)=>{
-            ob.x -= obstacleSpeed;
-            if(ob.type==='firewall'){
-                let pulse = 128 + Math.sin(Date.now()/200)*127;
-                ctx.fillStyle=`rgb(255,${pulse},${pulse})`;
-                ctx.fillRect(ob.x-6,ob.y-6,ob.w+12,ob.h+12);
-                ctx.fillStyle=RED;
-                ctx.fillRect(ob.x,ob.y,ob.w,ob.h);
-            } else {
-                let pulse = 128 + Math.sin(Date.now()/200)*127;
-                ctx.fillStyle=`rgb(${pulse},${pulse},${pulse})`;
-                ctx.beginPath();
-                ctx.moveTo(ob.x,ob.y+ob.h);
-                ctx.lineTo(ob.x+ob.w/2,ob.y);
-                ctx.lineTo(ob.x+ob.w,ob.y+ob.h);
-                ctx.closePath();
-                ctx.fill();
-                ctx.fillStyle=WHITE;
-                ctx.beginPath();
-                ctx.moveTo(ob.x,ob.y+ob.h);
-                ctx.lineTo(ob.x+ob.w/2,ob.y);
-                ctx.lineTo(ob.x+ob.w,ob.y+ob.h);
-                ctx.closePath();
-                ctx.stroke();
-            }
-
-            // Collision
-            let ph = getPlayerHitbox();
-            if(!invincible && ph.x < ob.x+ob.w && ph.x+ph.w > ob.x && ph.y < ob.y+ob.h && ph.y+ph.h > ob.y){
-                collisionSound.play();
-                shakeTimer=10;
-                gameActive=false;
-                gameOver=true;
-            }
-
-            if(ob.x+ob.w<0){ obstacles.splice(i,1); score++; scoreSound.play();
-                if(score%3===0 && spawnInterval>40){ spawnInterval-=2; obstacleSpeed+=0.5; }
-            }
-        });
-
-        // --- Powerups ---
-        if(Math.random()<0.002 && powerups.length<2){ // occasional spawn
-            let types=['score','slow','invincible'];
-            let p = types[Math.floor(Math.random()*types.length)];
-            powerups.push({x:WIDTH,y:Math.random()*100+150,w:30,h:30,type:p});
-        }
-
-        powerups.forEach((p,i)=>{
-            p.x -=3;
-            let col = p.type==='score'?YELLOW:p.type==='slow'?BLUE:PURPLE;
-            let pulse = 128 + Math.sin(Date.now()/200)*127;
-            ctx.fillStyle=`rgb(${pulse},${pulse},${col==='yellow'?0:col==='blue'?255:255})`;
-            ctx.beginPath();
-            ctx.arc(p.x,p.y,15,0,Math.PI*2);
-            ctx.fill();
-
-            // Collision
-            if(player.x< p.x+15 && player.x+player.w>p.x-15 && player.y< p.y+15 && player.y+player.h>p.y-15){
-                powerupSound.play();
-                activePowerup=p.type;
-                powerups.splice(i,1);
-                powerupTimer=0;
-                if(activePowerup==='score') score+=5;
-                else if(activePowerup==='slow') obstacleSpeed=Math.max(3,obstacleSpeed-2);
-                else if(activePowerup==='invincible') invincible=true;
-            }
-        });
-
-        // --- Active powerup ---
-        if(activePowerup){
-            powerupTimer++;
-            ctx.fillStyle=YELLOW;
-            ctx.font='24px Arial';
-            let status = activePowerup==='score'?'Score Boost!':activePowerup==='slow'?'Slow Motion!':'Invincible!';
-            ctx.fillText(status, 20,50);
-
-            if(powerupTimer>=powerupDuration){ 
-                if(activePowerup==='slow') obstacleSpeed+=2;
-                if(activePowerup==='invincible') invincible=false;
-                activePowerup=null; powerupTimer=0;
-            }
-        }
-
-        // --- Score ---
-        ctx.fillStyle='white';
-        ctx.font='28px Arial';
-        ctx.fillText('Score: '+score, 20,30);
-
-        // --- Screen shake ---
-        if(shakeTimer>0){ shakeTimer--; shakeOffset.x=Math.random()*10-5; shakeOffset.y=Math.random()*10-5;}
-        else{ shakeOffset={x:0,y:0}; }
-
-    } else if(gameOver){
-        ctx.fillStyle='rgba(0,0,0,0.5)';
-        ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle='red';
-        ctx.font='72px Arial';
-        ctx.textAlign='center';
-        ctx.fillText('GAME OVER',WIDTH/2,HEIGHT/2-80);
-        ctx.fillStyle='white';
-        ctx.font='36px Arial';
-        ctx.fillText('Score: '+score, WIDTH/2, HEIGHT/2);
-        ctx.fillStyle='orange';
-        ctx.font='28px Arial';
-        ctx.fillText('Press SPACE to Restart', WIDTH/2, HEIGHT/2+60);
+/* Input handling — keyboard, click/touch */
+let lastTouch = 0;
+function doJump(){
+  if(!running && !gameOver){ // start first time
+    running = true; gameOver = false; restartGameState();
+    try{ S.music.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  if(gameOver){
+    restartButton.style.display = 'none';
+    restartGameState();
+    running = true; gameOver = false;
+    try{ S.music.play().catch(()=>{}); }catch(e){}
+    return;
+  }
+  if(paused) return;
+  if(player.jumpsLeft > 0){
+    player.vy = jumpPower;
+    if(player.jumpsLeft === 1){
+      playSound(S.double);
+      addParticles(player.x, player.y, 'rgba(255,230,115,0.95)', 18);
     } else {
-        // Start screen
-        ctx.fillStyle='rgba(0,0,0,0.5)';
-        ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle='gold';
-        ctx.font='72px Arial';
-        ctx.textAlign='center';
-        ctx.fillText('Rialo Jumper', WIDTH/2, HEIGHT/2-60);
-        ctx.fillStyle='white';
-        ctx.font='36px Arial';
-        ctx.fillText('Press SPACE to Start', WIDTH/2, HEIGHT/2+40);
+      playSound(S.jump);
     }
-
-    requestAnimationFrame(loop);
+    player.jumpsLeft--;
+  }
 }
 
-loop();
+// click / touch anywhere on canvas to jump
+canvas.addEventListener('mousedown', e => { doJump(); });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); doJump(); }, {passive:false});
+
+// Jump button handlers (mouse + touch)
+jumpButton.addEventListener('mousedown', e => { e.preventDefault(); doJump(); });
+jumpButton.addEventListener('touchstart', e => { e.preventDefault(); lastTouch = Date.now(); doJump(); }, {passive:false});
+
+// Restart button (visible on game over)
+restartButton.addEventListener('mousedown', e => { restartButton.style.display='none'; restartGameState(); running=true; gameOver=false; try{S.music.play().catch(()=>{});}catch(e){} });
+restartButton.addEventListener('touchstart', e => { e.preventDefault(); restartButton.style.display='none'; restartGameState(); running=true; gameOver=false; try{S.music.play().catch(()=>{});}catch(e){} }, {passive:false});
+
+// keyboard
+addEventListener('keydown', (e) => {
+  if(e.code === 'Space') doJump();
+  if(e.code === 'Escape') paused = !paused;
+});
+
+/* Game reset */
+function restartGameState(){
+  score = 0;
+  obstacles.length = 0;
+  particles.length = 0;
+  powerups.length = 0;
+  player.y = H - 150;
+  player.vy = 0;
+  player.jumpsLeft = maxJumps;
+  spawnTimer = 0;
+  obstacleSpeed = 5;
+  activePower = null;
+  powerTimer = 0;
+  invincible = false;
+}
+
+/* Power-up bar update UI */
+function updatePowerBar(){
+  // reset
+  [icon_score, icon_slow, icon_inv].forEach(el => el.classList.remove('active'));
+  icon_score.style.opacity = 0.45; icon_slow.style.opacity = 0.45; icon_inv.style.opacity = 0.45;
+
+  if(activePower === 'score'){ icon_score.classList.add('active'); icon_score.style.opacity = 1; }
+  if(activePower === 'slow'){ icon_slow.classList.add('active'); icon_slow.style.opacity = 1; }
+  if(activePower === 'invincible'){ icon_inv.classList.add('active'); icon_inv.style.opacity = 1; }
+}
+
+/* Main loop (delta-time safe) */
+function loop(now){
+  const dt = Math.min(60, (now - last)) / 16.6667; last = now;
+
+  // resize
+  if(W !== innerWidth || H !== innerHeight){ W = innerWidth; H = innerHeight; canvas.width = W; canvas.height = H; player.y = Math.min(player.y, H - 100); }
+
+  // background scroll
+  bgX -= 2 * dt; cloudX -= 1 * dt;
+  if(bgX <= -W) bgX = 0;
+  if(cloudX <= -400) cloudX = 0;
+
+  // draw background & clouds
+  ctx.drawImage(A.bg, bgX, 0, W, H);
+  ctx.drawImage(A.bg, bgX + W, 0, W, H);
+  ctx.drawImage(A.clouds, cloudX, 60, 400, 100);
+  ctx.drawImage(A.clouds, cloudX + 400, 60, 400, 100);
+
+  // vignette overlay
+  ctx.fillStyle = `rgba(0,0,0,${vignetteAlpha})`;
+  ctx.fillRect(0,0,W,H);
+
+  if(running && !paused && !gameOver){
+    // physics
+    player.vy += gravity * dt;
+    player.y += player.vy * dt;
+
+    // land detection & jump reset
+    if(player.y >= H - 150){
+      player.y = H - 150;
+      player.vy = 0;
+      player.jumpsLeft = maxJumps;
+    }
+
+    // player bob
+    bob += 0.07 * dt;
+    const bobY = Math.sin(bob) * 3;
+
+    // particle trail (limit)
+    particles.push({ x: player.x + player.w/2 + (Math.random()*6-3), y: player.y + player.h - 4, vx: (Math.random()*-1-0.2), vy:(Math.random()*-1), size: Math.random()*2+2.4, color: '#64c8ff' });
+    if(particles.length > 420) particles.splice(0, particles.length - 420);
+
+    // draw particles
+    for(let i = particles.length - 1; i >= 0; i--){
+      const p = particles[i];
+      p.x += p.vx * dt; p.y += p.vy * dt; p.size -= 0.06 * dt;
+      if(p.size <= 0.06){ particles.splice(i,1); continue; }
+      ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
+    }
+
+    // draw player
+    ctx.drawImage(A.player, player.x, player.y + bobY, player.w, player.h);
+
+    // spawn obstacles / powerups
+    spawnTimer += dt;
+    if(spawnTimer > spawnDelay){
+      spawnObstacle();
+      if(Math.random() < 0.22) spawnPowerup();
+      spawnTimer = 0;
+    }
+
+    // obstacles update & draw
+    for(let i = obstacles.length - 1; i >= 0; i--){
+      const o = obstacles[i];
+      o.x -= obstacleSpeed * dt;
+
+      // glow
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = `hsl(${o.hue},100%,68%)`;
+      ctx.fillStyle = `hsl(${o.hue},95%,58%)`;
+
+      if(o.type === 'spike'){
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y + o.h);
+        ctx.lineTo(o.x + o.w / 2, o.y);
+        ctx.lineTo(o.x + o.w, o.y + o.h);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+      }
+      ctx.shadowBlur = 0;
+
+      // collision detection
+      const ph = { x: player.x + 5, y: player.y + 35, w: 40, h: 15 };
+      if(!invincible && ph.x < o.x + o.w && ph.x + ph.w > o.x && ph.y < o.y + o.h && ph.y + ph.h > o.y){
+        // collision
+        playSound(S.collide);
+        addParticles(player.x, player.y, 'rgba(255,80,80,0.98)', 50);
+        gameOver = true;
+        running = false;
+        restartButton.style.display = 'block';
+      }
+
+      // remove off-screen
+      if(!o.scored && o.x + o.w < player.x){
+    o.scored = true; // mark as scored
+    score++;
+    playSound(S.score);
+}
+
+// remove off-screen
+if(o.x + o.w < -20) obstacles.splice(i, 1);
+    }
+
+    // powerups update + collisions
+    for(let i = powerups.length - 1; i >= 0; i--){
+      const p = powerups[i]; p.x -= 3 * dt;
+      // draw
+      ctx.fillStyle = p.type === 'score' ? 'yellow' : p.type === 'slow' ? '#64c8ff' : '#2fe6d6';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI*2); ctx.fill();
+
+      // collision
+      if(player.x < p.x + 15 && player.x + player.w > p.x - 15 && player.y < p.y + 15 && player.y + player.h > p.y - 15){
+        playSound(S.powerup);
+        activePower = p.type; powerTimer = 0;
+        if(activePower === 'score'){ score += 5; playSound(S.score); }
+        else if(activePower === 'slow'){ obstacleSpeed = Math.max(3, obstacleSpeed - 1.5); }
+        else if(activePower === 'invincible'){ invincible = true; }
+        powerups.splice(i,1);
+      }
+      if(p.x < -30) powerups.splice(i,1);
+    }
+
+    // active power-up handling
+    if(activePower){
+      powerTimer += dt;
+      if(powerTimer >= powerDuration){
+        if(activePower === 'slow') obstacleSpeed += 1.5;
+        if(activePower === 'invincible') invincible = false;
+        activePower = null; powerTimer = 0;
+      }
+    }
+
+    // gradually increase difficulty
+    const targetSpeed = 5 + score * 0.08; // base 5 + score factor
+const maxSpeed = 50;
+obstacleSpeed += (targetSpeed - obstacleSpeed) * 0.02 * dt; // gradual approach
+obstacleSpeed = clamp(obstacleSpeed, 5, maxSpeed);
+
+    // update score displays
+    scoreText.textContent = `Score: ${score}`;
+    updatePowerBar();
+  }
+
+  // paused overlay
+  if(paused){
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#ffd24d'; ctx.font = '54px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W/2, H/2 - 30);
+    ctx.fillStyle = '#fff'; ctx.font = '20px Arial';
+    ctx.fillText('Press ESC or Tap Jump to Resume', W/2, H/2 + 10);
+  }
+
+  // game over overlay (also shows restart button)
+  if(gameOver){
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = 'red'; ctx.font = '68px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', W/2, H/2 - 60);
+    ctx.fillStyle = '#fff'; ctx.font = '28px Arial'; ctx.fillText(`Score: ${score}`, W/2, H/2);
+    ctx.fillStyle = '#ffa94d'; ctx.font = '18px Arial'; ctx.fillText('Press SPACE or Tap RESTART to play again', W/2, H/2 + 46);
+  }
+
+  // UI glow: jump button pulse state toggled by activePower presence (visual nicety)
+  if(activePower === 'invincible') jumpButton.classList.add('pulse');
+  else jumpButton.classList.add('pulse'); // keep subtle pulse always
+
+  requestAnimationFrame(loop);
+  last = now;
+}
+
+/* start animation */
+requestAnimationFrame(loop);
+
+/* expose tiny helpers in console for testing (optional) */
+window.__RJ = {
+  spawnObstacle, spawnPowerup, addParticles, restartGameState
+};
 </script>
 </body>
 </html>
